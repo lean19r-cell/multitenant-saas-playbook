@@ -11,9 +11,10 @@ It captures the operating discipline that came out of actually shipping a multi-
 - [`references/testing-discipline.md`](references/testing-discipline.md) — red→green→refactor, tests that name the break they catch, and multi-tenant tests worth writing every time.
 - [`references/design-plan-execute.md`](references/design-plan-execute.md) — classifying a request (spike / bounded / architectural), approval gates, writing implementation plans, and finishing a branch.
 - [`references/review-and-agents.md`](references/review-and-agents.md) — receiving and requesting code review, and dispatching parallel agents.
-- [`references/nextjs-supabase-gotchas.md`](references/nextjs-supabase-gotchas.md) — concrete bug patterns in the Next.js/Supabase/Postgres stack, each with a broken/fixed code pair.
+- [`references/nextjs-supabase-gotchas.md`](references/nextjs-supabase-gotchas.md) — concrete bug patterns in the Next.js/Supabase/Postgres stack (redacted Server Action errors, RLS that silently empties joins, column-level grants, ignored gate results…), each with a broken/fixed code pair.
+- [`references/money-and-ledger-integrity.md`](references/money-and-ledger-integrity.md) — patterns from auditing code that moves money and stock: void flags and their compensating entries, lock order and missing locks, hard-delete vs `activo`, `NaN`/rounding traps, rules that must hold on every write path, stale-base `create or replace`, and the checklist before calling such a fix done.
 - [`references/multitenant-architecture.md`](references/multitenant-architecture.md) — how to design one codebase that serves structurally different businesses without forking.
-- [`references/responsive-design-method.md`](references/responsive-design-method.md) — a breakpoint strategy and mockup-first process for retrofitting responsiveness onto an existing app.
+- [`references/responsive-design-method.md`](references/responsive-design-method.md) — a breakpoint strategy and mockup-first process for retrofitting responsiveness onto an existing app, plus the small repeating shapes found in a second pass on an accordion-style app.
 
 ## Install
 

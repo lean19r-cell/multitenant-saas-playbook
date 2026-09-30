@@ -1,13 +1,13 @@
 ---
 name: the-seedskill
-description: Use when building, fixing or evolving a production web app that already has real users, especially a multi-tenant SaaS (reference stack Next.js + Supabase/Postgres + Tailwind + Vercel). Use when a bug report, failing test or "it looks completely broken" report arrives; before proposing a fix; before claiming something is fixed, passing or done; before writing code for a new feature or behavior change; when writing or changing tests; when receiving or requesting code review; when deciding whether to push, merge or clean up a branch; when doing a responsive/mobile pass; when designing one codebase to serve several distinct businesses/tenants; and when asked to turn a project's lessons into a reusable method. Push harder to consult this on git worktree lifecycle and push/merge authorization, Postgres RPC/RLS patterns, and "broken in production but tests are green."
+description: Use when building, fixing or evolving a production web app that already has real users, especially a multi-tenant SaaS (reference stack Next.js + Supabase/Postgres + Tailwind + Vercel). Use when a bug report, failing test or "it looks completely broken" report arrives; before proposing a fix; before claiming something is fixed, passing or done; before writing code for a new feature or behavior change; when writing or changing tests; when receiving or requesting code review; when deciding whether to push, merge or clean up a branch; when doing a responsive/mobile pass; when designing one codebase to serve several distinct businesses/tenants; and when asked to turn a project's lessons into a reusable method. Push harder to consult this on git worktree lifecycle and push/merge authorization, Postgres RPC/RLS patterns, code that moves money or stock (cash close, voids/refunds, balances, locks, column-level permissions), and "broken in production but tests are green."
 ---
 
 # The Seedskill
 
 ## Why this exists
 
-This captures the operating discipline that came out of actually shipping a multi-tenant restaurant/property-management SaaS solo, over many rounds of: build → user tries it for real → something's subtly wrong → find the *actual* mechanism → fix it → notice the same mechanism is probably lurking elsewhere → check. It pairs a compact core of general engineering discipline (debugging, verification, testing, design gates, review) with the specific residue: the gotchas that cost real debugging time, the design calls that turned out right, and the calls that had to be reversed after the user actually used the thing.
+This captures the operating discipline that came out of actually shipping a multi-tenant restaurant / property-management / retail SaaS solo, over many rounds of: build → user tries it for real → something's subtly wrong → find the *actual* mechanism → fix it → notice the same mechanism is probably lurking elsewhere → check. It pairs a compact core of general engineering discipline (debugging, verification, testing, design gates, review) with the specific residue: the gotchas that cost real debugging time, the design calls that turned out right, and the calls that had to be reversed after the user actually used the thing.
 
 **Read `references/` files when the situation matches — don't preload them.**
 
@@ -18,10 +18,11 @@ This captures the operating discipline that came out of actually shipping a mult
 | A request to build or change behavior (not a reported bug) | `references/design-plan-execute.md` — classify spike/bounded/architectural, approval gates, writing a plan, finishing a branch |
 | Review feedback arrives, a branch is about to be integrated, or several independent problems need work at once | `references/review-and-agents.md` — receiving/requesting review, parallel agents |
 | "Works locally, broken in prod", writing a Server Action, touching a Postgres function exposed via RPC | `references/nextjs-supabase-gotchas.md` — concrete bug patterns in this stack, each with a broken/fixed pair |
+| Code that moves money or inventory (cash close, sales, voids/refunds, payments, balances, stock), a migration that redefines a function or view, or a "the numbers don't add up" report | `references/money-and-ledger-integrity.md` — void flags and compensating entries, lock order, hard-delete vs `activo`, `NaN`/rounding traps, rules on every write path, stale-base `create or replace`, and the checklist before calling such a fix done |
 | Starting a new SaaS, or adding a second vertical/tenant-type to an existing one | `references/multitenant-architecture.md` — one codebase for structurally different businesses without forking |
 | A responsive/mobile pass, or any UI change visual enough to deserve a mockup first | `references/responsive-design-method.md` — breakpoint strategy and mockup-first process |
 
-The first four are the general engineering discipline, adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT) so this skill stands on its own. The last three are the domain-specific residue from real production work.
+The first four are the general engineering discipline, adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT) so this skill stands on its own. The last four are the domain-specific residue from real production work.
 
 ## The rules that don't bend
 
@@ -54,6 +55,8 @@ If a merge is blocked by a permissions/policy layer you don't control (a CI gate
 
 After a merge: sync the base branch locally (fast-forward only), then clean up the worktree and branch (local + remote) — but only once you've confirmed the merge actually happened, and only if the user hasn't indicated they want to keep iterating on that branch.
 
+**Merging code does not apply its database migrations to production.** If the merge carries migrations, someone with production database access has to run the push (dry-run first) — ask, right after the merge, whether that has been done, because until then code and database are out of sync. Don't run it yourself against production unless the user explicitly hands you that access for that push.
+
 ## Verify by seeing it, not by inferring it
 
 A green build and a green test suite prove the code compiles and the logic you thought to test does what you thought. Neither proves a human looking at the screen sees what you intended. For anything with a visual or interactive surface:
@@ -81,6 +84,8 @@ The single highest-leverage habit in this whole playbook: a bug is rarely alone.
 2. Grep/search the rest of the codebase for the same construct (same library-less bar-chart pattern, same `"use server"` + un-caught `throw`, same "show every row from the lookup table as a filter option" shape).
 3. Report findings as an inventory before fixing anything else — a bug class found via systematic search is worth far more to the user than the one instance they happened to notice, and finding it *before* they hit it in production is the whole point.
 
+For code that moves money or stock, the audit has its own checklist — other readers of the same table, compensating entries, other callers, other write paths, changed meaning, lock order, stale base, and a test that fails without the fix (`references/money-and-ledger-integrity.md` #8). On one real audit batch, most of the nine fixes needed a second review round precisely because the first pass fixed the reported spot and not the class.
+
 This applies just as much to your own conventions as to bugs: if you establish a good pattern once (a typed `{ok, error}` return instead of a thrown exception; an explicit "Guardar cambios" button instead of a silent autosave), and later add a new feature that doesn't follow it, that's the same class of drift — catch it the same way.
 
 Don't undersell how far this goes: on one real project, fixing a single "can't anull a sale" bug report (root cause: a Server Action threw a raw error that Next.js redacted in production — see gotchas reference #1) prompted an exhaustive audit of every Server Action in the codebase, which turned up the same raw-throw shape in **21 of 23 files, on the order of 99 functions** — one fixed bug report was standing in for a latent class present almost everywhere else, just not yet triggered. The same audit pass, applied to a different fixed bug (an unfiltered catalog used as a filter — gotchas reference #4), found two more live instances of that exact shape elsewhere in the app within minutes of looking. Neither of those would have been found by waiting for a user to report them one at a time. A systematic grep after the first fix is cheap; finding out about instance #47 from an angry user months later is not.
@@ -95,6 +100,11 @@ Don't undersell how far this goes: on one real project, fixing a single "can't a
 | "The user's wording is contradictory, I'll just pick one" | Restate your best interpretation in one line and let them confirm — cheaper than a wrong deploy. |
 | "They asked for sticky, now they don't want it — I must have built it wrong" | Read it again: they're describing normal iteration, not a bug in your implementation. Ship the reversal. |
 | "I found one instance, that's the fix" | Grep for the same shape elsewhere before moving on — that's where most of the value is. |
+| "The brief lists two callers/pickers/readers, so that's the scope" | Grep for all of them. Review found a third picker, a second caller of a modal, and two more views reading the same table after the "complete" list was fixed. |
+| "An optional prop / a default value keeps old callers working" | It also keeps them on the old, buggy behavior. Make the prop required; never ship a default that reproduces the bug (`cantidadCuotas` defaulting to `1`). |
+| "The UI hides it / the app query no longer selects it, so it's protected" | RLS filters rows, not columns, and the API is reachable without your UI. Test with that role's own token against the API directly. |
+| "I excluded the voided rows from the total, so it's fixed" | If the void also created a compensating entry (a refund egreso), you now subtract it twice. Decide per pair: drop both or neither. |
+| "`await requireX()` — the gate is in place" | If the helper returns `{ok:false}` instead of throwing, a bare `await` discards the verdict and the gate does nothing. Check the result. |
 | "It compiled and the page loaded, good enough" | A blank chart or an invisible filter also "loads." Look at the actual pixels for anything visual. |
 | "The fix is obvious, I'll skip the investigation" | Seeing the symptom isn't understanding the mechanism. Reproduce and trace first — it's faster than thrashing. |
 | "One more fix attempt" (after two failed ones) | Three failed fixes means the architecture is wrong, not the hypothesis. Stop and discuss the design. |

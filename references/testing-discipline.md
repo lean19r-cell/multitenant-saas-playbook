@@ -43,6 +43,24 @@ expect(calcTotal({ items: [{ price: 1200, qty: 2 }], tip: 300 })).toBe(2700);
 - Tenant A cannot read or write tenant B's rows (RLS), from each role.
 - A lower role can't reach an action the UI merely hides from it.
 - The error path of every Server Action returns a typed error instead of throwing (see gotchas #1).
+- Every role that uses a screen sees non-empty data on it — RLS silently empties joins and embeds for the role that isn't owner/admin (gotchas #14). An owner-only test passes on all of those bugs.
+- A sensitive column can't be read or written by a role that has the row but not the column, **through the API directly** with that role's own token, not only through your app's query (gotchas #15).
+
+## Tests that looked fine and weren't (lessons from review rounds)
+
+Each of these is a real gap that review found in a test suite that was otherwise green — the kind of test that keeps passing after someone reverts the fix.
+
+**The test re-implemented the code it was testing.** A test for the installment calculation recomputed `precio / cuotas` inside itself and compared the result to itself; neither the form nor the server action was imported anywhere, so reverting the fix wouldn't have failed it. Fix: extract the calculation to a pure function in a module with no `"use server"` (`calcularMontoCuota()` in `lib/formato.ts`), imported by the component *and* the test, with hand-derived literals as expectations (60,000,000 with a 10,000,000 down payment in 10 installments → 5,000,000, not 6,000,000).
+
+**When the unit can't be imported, the extraction must carry the assertion target with it.** A `"use server"` function that calls `cookies()` or React's `cache()` can't be imported under Vitest's node environment. The round-2 attempt extracted the report functions into plain "flat" functions so they could be called with a Supabase client — but the permission gate lived in the `"use server"` wrappers, not in the extracted bodies, so the new tests covered everything except the thing being fixed; the extraction also broke the build (a component still imported the types from the old file). It was introduced in round 2 and reverted in round 3. What held up, in order of preference: (1) extract *pure logic* and test that; (2) test the underlying RPC/policy with a real authenticated session; (3) as a last resort a **structural** test that reads the source and asserts the guard is still there (each of the three function bodies contains `if (!gate.ok)`; the form's `input` object uses `monto_mensual: montoCuota`). Name it as structural in the test title — it catches a revert, not behavior — and never present it as behavioral coverage.
+
+**A concurrency test must let only the lock under test serialize the calls.** A test claimed to isolate the customer-row lock between two concurrent sales, but both sales used the same product row, which is locked *earlier* in the function — so they serialized there and the test stayed green even with the customer lock deleted. Use disjoint fixtures (two different products), then remove the lock under test and confirm the test fails. Assert the invariant rather than who wins (`money-and-ledger-integrity.md` #2), and run it several times in isolation to rule out flakiness before trusting it.
+
+**Prove red against the old definition.** For SQL fixes, apply the old function body (or revert the migration) in the local database, run the new test, and watch it fail; only then restore. Several fixes here recorded "N of M cases fail without the migration"; the cases that still pass without the fix are controls (they pin the behavior that must *not* change), so report both numbers.
+
+**Test every object a migration touches.** One migration fixed a function and two views; the first commit's test exercised only the function. List the objects in the migration header, then check each has a test.
+
+**Test through the surface an attacker or another role sees.** For permission and column-privilege fixes, call PostgREST/RPC with the role's own token and assert the `42501` — an app-level test passes even while the direct API still leaks.
 
 ## When testing is hard
 
