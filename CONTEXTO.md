@@ -6,7 +6,7 @@
 > trabajo. Se actualiza en cada sesión que toque la skill — no es la documentación de la
 > skill (eso es `SKILL.md` + `references/`), es el **registro de procedencia**.
 >
-> Última actualización: 2026-09-30.
+> Última actualización: 2026-09-30 (misma fecha: se puso al día también el `CONTEXTO.md` del webapp).
 
 **Este archivo se carga solo.** El `CLAUDE.md` de una línea en la raíz lo importa (mismo
 patrón que `prp-gestion-webapp`). Ojo: cuando la skill está *instalada* en
@@ -114,9 +114,12 @@ nuevo; la evidencia de "falla sin el fix" es la que dejaron los propios commits.
 2. La auditoría `informe-auditoria-2026-09-27.md` vive **fuera** de los repos
    (`D:\` en la máquina de L); el plan de la Tanda 1 habla de "9 hallazgos", así que
    probablemente haya Tandas 2+. Si aterrizan, asimilarlas.
-3. **`CONTEXTO.md` del webapp está desactualizado** (última actualización 2026-09-21): no
-   menciona el vertical Comercio ni la Tanda 1 de la auditoría, ni los PRs #72/#73. No es
-   parte de esta skill, pero conviene actualizarlo en su propia sesión.
+3. **`CONTEXTO.md` del webapp**: estaba desactualizado (2026-09-21) y se puso al día el
+   2026-09-30 (commit `f28c744` en la rama `claude/great-fermat-93hop7` del webapp, **todavía
+   no mergeado a `master`**): agrega el vertical Comercio, la Tanda 1 de la auditoría y una
+   advertencia de que las migraciones `126`–`163` no tienen confirmación de estar aplicadas
+   a producción. Ahí también quedó anotado el último hash asimilado por esta skill
+   (`751894c`). Mantener ambos registros en sincronía.
 
 ## Reglas de trabajo en este repo
 
