@@ -115,11 +115,13 @@ nuevo; la evidencia de "falla sin el fix" es la que dejaron los propios commits.
    (`D:\` en la máquina de L); el plan de la Tanda 1 habla de "9 hallazgos", así que
    probablemente haya Tandas 2+. Si aterrizan, asimilarlas.
 3. **`CONTEXTO.md` del webapp**: estaba desactualizado (2026-09-21) y se puso al día el
-   2026-09-30 (commit `f28c744` en la rama `claude/great-fermat-93hop7` del webapp, **todavía
-   no mergeado a `master`**): agrega el vertical Comercio, la Tanda 1 de la auditoría y una
-   advertencia de que las migraciones `126`–`163` no tienen confirmación de estar aplicadas
-   a producción. Ahí también quedó anotado el último hash asimilado por esta skill
-   (`751894c`). Mantener ambos registros en sincronía.
+   2026-09-30: el [PR #74](https://github.com/lean19r-cell/prp-gestion-webapp/pull/74) ya
+   está mergeado a `master` (agrega el vertical Comercio y la Tanda 1 de la auditoría).
+   La advertencia de que las migraciones `126`–`163` no tenían confirmación quedó
+   **resuelta**: están todas aplicadas a producción (confirmado 2026-09-30 con el
+   `dry-run` de `supabase db push`, que solo listó `157`-`163` como pendientes). Ahí también
+   quedó anotado el último hash asimilado por esta skill (`751894c`). Mantener ambos
+   registros en sincronía.
 
 ## Reglas de trabajo en este repo
 
