@@ -15,6 +15,21 @@ A common starting state: an app built and shipped against one implicit target wi
 3. **Any table with a fixed or wide implicit width** — wrap it in its own horizontally-scrolling container (`overflow-x-auto`) rather than trying to make the table itself responsive; a table genuinely needs all its columns, scrolling sideways is the honest way to keep them all reachable on a narrow screen.
 4. **A filter/nav sidebar *inside* a page** (a "13 report types" list, say) that's a second fixed-width column on top of the app's own main nav — easy to miss because it doesn't look like "the sidebar," it looks like page content. On narrow viewports this stacks with the main nav to eat even more width than either alone. A native `<select>` covering the same options, shown only below the breakpoint, is a fine, low-effort substitute — it doesn't need to look impressive, it needs to work.
 
+## When the app already has an accordion/list layout: the bugs are small, specific and repeated
+
+A second vertical (property management) never got the pass the first one (POS) received. It had no sidebar and no fixed-width side panels — a list with inline expandable detail is mobile-friendly by construction — so a rewrite would have been the wrong response. Investigating in parallel and then checking each screen at 375px in a real browser found a short list of repeating shapes, fixed across ~37 files:
+
+1. **Fixed page padding with no `sm:` variant** (`p-8` on every screen and every `error.tsx`) → `p-4 sm:p-8`. Grep for it; it appears on every page built from the same template.
+2. **Rows built as `flex justify-between` with no `flex-wrap`** — a long name plus action buttons pushes the last button off-screen (confirmed live: the "Eliminar" button of a property row was unreachable). Add `flex-wrap`, and give the long text its own full-width line on mobile (`w-full sm:flex-1`).
+3. **`min-w-0 flex-1` on that text is not the safe fix.** The first attempt let a long user name wrap onto a second line that rendered *behind* the neighboring `<select>`. `w-full` on mobile and `sm:flex-1` from 640px up fixed it. Look at wrapped text next to a control, not only at whether the row fits.
+4. **A page ported from a sibling component doesn't inherit the sibling's mobile fix.** The property-management reports screen is a separate client component from the POS one, so the mobile `<select>` replacing the fixed `w-64` report nav had to be ported by hand. When one screen was fixed, list every other component that copied its layout.
+5. **A fixed pixel height on a widget** (a 500px satellite map on a 375px-wide phone) → smaller fixed height below `sm`, original from `sm` up.
+6. **Form rows with several inputs plus a button on one line** (the platform admin's "add user" form: four inputs + button) → column on mobile, row on desktop. A filter `<select>` without `w-full` can force horizontal scroll of the *whole page*.
+
+Deliberately left alone, and worth saying so in the PR: tables that already had `overflow-x-auto`, components that already used `min-w-0` + `truncate`, grids that were already `grid-cols-1` mobile-first. Not verified without a real touch device: drawing a polygon with a map-drawing library on a touchscreen.
+
+**Verify before and after at 375px and at desktop width**, on the screens that changed. Don't run a production build in the directory a dev server is using while you do (SKILL.md, "Verify by seeing it").
+
 ## Test at the breakpoint boundary, not just the extremes
 
 "Works on my phone" (very narrow) and "works on my monitor" (very wide) are the two easiest states to eyeball and the least likely to be where the actual bug lives. The interesting failures cluster right around the chosen breakpoint — a half-maximized browser window, a small laptop screen, a tablet in portrait. Explicitly resize to a handful of widths spanning the breakpoint (not just below-vs-above) and check both that the narrow layout doesn't look cramped right before the switch and that the wide layout doesn't look starved right after it.

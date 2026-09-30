@@ -116,7 +116,9 @@ Note the `Math.max(pct, 2)` — a real zero-or-near-zero data point should still
 
 - **Stale Kong routing after `supabase db reset`:** the local API gateway container can end up pointing at a stale upstream IP after a reset, producing opaque `502`/connection errors that look like the reset itself failed. Fix: `docker restart <kong-container-name>`, wait a few seconds, verify `curl http://127.0.0.1:54321/auth/v1/health` returns 200 before retrying whatever failed.
 - **Never run a production build and a dev server in the same directory at the same time.** They share a `.next/` build-cache directory and will corrupt each other's output — the failure mode is bizarre (a page renders as raw unstyled HTML, or a stale dev bundle serves after a supposedly-clean build) and looks exactly like a real application bug. If you need both, use separate worktrees/checkouts, or stop one before running the other.
-- **Docker Desktop can silently stop during a long idle period**, and every test in the suite fails at once. A sudden 100%-failure run after a long gap is a Docker-down signal before it's a real-regression signal — check `docker ps` first.
+- **Docker Desktop can silently stop during a long idle period**, and every test in the suite fails at once. A sudden 100%-failure run after a long gap is a Docker-down signal before it's a real-regression signal — check `docker ps` first. On Windows the symptom is a named-pipe error rather than "connection refused", and it can mean the Docker Desktop *app* is off, not just the containers.
+- **The local Supabase database is shared by every git worktree.** A `supabase db reset` run from any one worktree wipes it under all the others working in parallel. Apply new migrations with `supabase migration up`; if you think a reset is needed, stop and ask. Data that "disappears" or results that contradict each other mid-verification: suspect another session before suspecting your own code.
+- **Migration numbers collide between parallel branches.** Before merging, check that the branch's number range isn't already taken on the base branch (this happened repeatedly, once forcing a renumber of 24 files). Before creating a migration, list the real highest number (`ls supabase/migrations | sort | tail -3`) — earlier tasks in the same plan shift it.
 
 ## 8. `position: sticky` inside a sidebar-layout content pane needs a *height-bounded* scroll container, not just `overflow-y-auto`
 
@@ -197,3 +199,94 @@ Applies to every function/view that derived a "local date" or "local hour" this 
 **Fixed — stop relying on the DOM ancestor for positioning at all:** render the popover in a portal to `document.body` with `position: fixed`, computing its position from the trigger's `getBoundingClientRect()` at open time, and close it on scroll/resize so it doesn't drift from its trigger. Click-outside detection then has to check both the trigger and the portaled panel explicitly, since they no longer share a DOM ancestor.
 
 **Where to look for this:** any absolutely-positioned popover/dropdown/tooltip nested inside a container that sets `overflow-x` (or `-y`) to anything but `visible` for an unrelated reason (horizontal scroll on a table, say) — the clip risk exists regardless of whether the popover has actually been clipped yet, since it only shows up once content happens to be shorter than usual.
+
+## 13. Turning a throwing gate into a returned `{ok:false}` makes it possible to ignore it
+
+**The mechanism:** after the Server Action error audit (#1), the permission helper became `requiereModuloReportes(): Promise<{ok:true} | {ok:false; error:string}>` instead of throwing. Five report functions were written against the new shape (`const gate = await …; if (!gate.ok) return gate;`). Three older ones kept the bare line `await requiereModuloReportes();` — it still compiles, still runs, and discards the result. **The permission check was a no-op**: a user without the reports module (the collections role, say) could pull the property-owner settlement, sales-commission and zone-performance reports by invoking the action directly. The UI already blocked the screen, so nothing looked wrong, and there was no error and no type error to point at it.
+
+**Broken:**
+```ts
+export async function obtenerReporteComisionesVendedor(desde: string, hasta: string): Promise<ComisionVendedor[]> {
+  await requiereModuloReportes();          // result dropped — gate does nothing
+  ...
+}
+```
+
+**Fixed** — these three deliberately kept the throwing convention of read functions (they don't return `Resultado<T>`, so `return gate` doesn't type-check), so they throw the gate's message:
+```ts
+  const gate = await requiereModuloReportes();
+  if (!gate.ok) throw new Error(gate.error);
+```
+
+**Where to look:** after converting *any* throwing helper into a result-returning one, audit every caller — `grep -rnE "^\s*await (requiere|assert|ensure|check)\w*\(" lib app` finds the bare-statement calls. Prefer helpers whose failure can't be ignored: throw, or return a value the caller must destructure to proceed. This is the mirror image of #1: converting throws into returned errors fixes the redaction problem and creates a new failure mode where the error is never looked at.
+
+**Testing caveat:** a `"use server"` function that calls `cookies()` can't be imported under Vitest, so the gate can't be exercised directly — see `testing-discipline.md` ("When the unit can't be imported") for what held up.
+
+## 14. RLS silently empties a join or an embed for the role that uses the screen most
+
+**The mechanism:** RLS on the *joined* table filters rows without raising anything, so a `left join` or a PostgREST embed (`select("*, productos(nombre)")`) comes back NULL or empty for a role that can read the parent table but not the joined one. `security_invoker` views behave the same way — they evaluate the base tables' policies as the caller. It shows up for the least-privileged role while the owner and admin (who hold every module) never see anything wrong. Three real instances in one codebase:
+- The cashier's ticket printed **without the invoice number**: `v_ventas_turno_actual` left-joined `timbrados`, whose SELECT policy was `nivel = 'owner'` → every joined column NULL for a cashier.
+- The salesperson saw an **empty product selector** on the sales screen: the list read `productos_comercio` directly, whose policy requires the `productos` module, which the seller role doesn't have.
+- The warranty list showed **every product name blank** for the same role: an embedded `productos_comercio(nombre)`.
+
+**Two fixes, chosen by how sensitive the joined table is:**
+```sql
+-- Not sensitive (invoice number): widen the policy to the module that needs it
+drop policy "timbrados_select_owner" on public.timbrados;
+create policy "timbrados_select_modulo_comanda" on public.timbrados
+  for select using (
+    empresa_id = public.current_empresa_id()
+    and (public.current_nivel() = 'owner' or public.current_tiene_modulo('comanda'))
+  );
+
+-- Sensitive columns on the same table (cost): do NOT widen the policy. Add a narrow
+-- security-definer RPC gated on either module, returning only the safe columns.
+create or replace function public.listar_productos_venta()
+returns table (id uuid, nombre text, precio_venta numeric)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.current_tiene_modulo('ventas') or public.current_tiene_modulo('productos')) then
+    raise exception 'No tenés permiso para ver el catálogo de venta';
+  end if;
+
+  return query
+  select p.id, p.nombre, p.precio_venta      -- never costo_promedio
+  from public.productos_comercio p
+  where p.empresa_id = public.current_empresa_id()
+  order by p.nombre;
+end;
+$$;
+```
+Widening `productos_comercio`'s policy would have handed the seller `costo_promedio`; a `security_invoker` view doesn't help because it still evaluates the base policy. Resolve names by matching on `producto_id` in a plain module (no `"use server"`, client passed in) so it's also testable.
+
+**Where to look:** for each screen, take its *least*-privileged role and list every table the screen joins or embeds; check that role's SELECT policy on each. Test by logging in as that role with data present — an owner-only test passes on all three of these. Put "each role that uses this screen sees non-empty data" in the plan's review-focus list.
+
+## 15. RLS filters rows, not columns — protect a sensitive column with column-level grants
+
+**The mechanism:** Postgres gives `authenticated` table-level privileges on every column, and RLS only decides *which rows*. A role that legitimately has access to a row can read and write every column of it through PostgREST with its own token, bypassing whatever your app's queries choose to select. Two real cases:
+- A seller could read `ventas_detalle.costo_unitario_snapshot` (the frozen unit cost). Round 2 removed the embed from the app query — that closed only the *app* side; a direct API call still returned it. Round 3 closed the database side.
+- The warehouse role could run `update productos_comercio set costo_promedio = 1` directly. That column is meant to be written only by the weighted-average purchase RPC; a hand-written value corrupts the cost frozen into every future sale and the profitability reports.
+
+**Fixed — write side:**
+```sql
+revoke insert, update on public.productos_comercio from anon, authenticated;
+grant insert (empresa_id, marca_id, categoria_id, nombre, precio_venta, stock_minimo),
+      update (marca_id, categoria_id, nombre, precio_venta, stock_minimo)
+  on public.productos_comercio to authenticated;
+-- costo_promedio is now writable only by security-definer RPCs (registrar_compra) and service_role
+```
+**Fixed — read side:** `revoke select on public.ventas_detalle from anon, authenticated; grant select (id, venta_id, producto_id, cantidad, precio_unitario) on public.ventas_detalle to authenticated;` — `costo_unitario_snapshot` is left out on purpose.
+
+**Consequences to expect** (they're the intended behavior, not regressions):
+- `security definer` RPCs and the service role are unaffected — they don't run as `authenticated`.
+- A direct `UPDATE` on a table with no update policy used to affect 0 rows silently; now it fails with `42501`. Adjust tests that asserted "0 rows".
+- After a read-side revoke, `select("*")` from the client fails with `42501` because it expands to columns the role can't read — list the columns explicitly.
+- The grant is a whitelist: a column added later has no grant until a migration adds it. An unexpected "permission denied" on a brand-new column usually means this.
+
+**Verify against the API surface, not the app:** call PostgREST with that role's own token and expect `42501`; then revert the migration and confirm those tests fail. **Where to look:** any column an RPC is supposed to own — cost averages, balances, credit limits, stock levels, totals, audit stamps. If a role can `update` the table, it can write that column.
+
+## 16. Adding a prop to a shared component: make it required, or callers you didn't know about keep the old behavior
+
+`AnularVentaModal` gained `formaPago` so the refund option could say "no afecta la caja" for card and transfer sales. It was added as *optional*, to avoid breaking a second caller (`HistorialVentasTab`, in Reports) that the brief hadn't mentioned. That caller silently kept showing "genera un egreso de caja por el total de la venta" for every sale — exactly the misleading text the change existed to remove. A reviewer found it.
+
+**Fix:** pass the value in the second caller (the data was already in the row object), and change the prop from optional to **required** — `formaPago: string | null`, required but nullable — so the compiler lists every caller and a future one has to decide. Rule: before changing a shared component's contract, `grep` all importers; use a required prop rather than an optional one with a legacy default whenever that default *is* the behavior you're removing.
